@@ -10,23 +10,10 @@ DBIx::EnumConstraints - generates enum-like SQL constraints.
   use DBIx::EnumConstraints;
 
   my $ec = DBIx::EnumConstraints->new({
-	  	name => 'kind', fields => [ [ 'k1', 'a', 'b' ]
-					, [ 'k2', 'b' ] ]
+	  	table => 'the_table'
+		, name => 'kind', fields => [ [ 'a', 'b' ]
+					, [ 'b' ] ]
   });
-
-  # get enum field definition
-  my $edef = $ec->enum_definition;
-
-  # $edef is now 'kind smallint not null check (kind > 0 and kind < 2)'
-
-  # get constraints array
-  my @cons = $ec->constraints;
-
-  # @cons is now (
-  # 	'constraint k1_has_a check (kind <> 1 or a is not null)'
-  #	, 'constraint k1_has_b check (kind <> 1 or a is not null)'
-  #	, 'constraint k2_has_b check (kind <> 2 or b is not null)'
-  #	, 'constraint k2_has_no_a check (kind <> 2 or a is null)')
 
 =head1 DESCRIPTION
 
@@ -44,9 +31,9 @@ have C<a> but no C<b> columns.
 
 package DBIx::EnumConstraints;
 use base 'Class::Accessor';
-__PACKAGE__->mk_accessors(qw(name fields optionals));
+__PACKAGE__->mk_accessors(qw(name fields optionals table));
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 CONSTRUCTORS
 
@@ -55,6 +42,10 @@ our $VERSION = '0.01';
 C<$args> should be HASH reference containing the following parameters:
 
 =over
+
+=item table
+
+The table for which to generate the constraints.
 
 =item name
 
@@ -65,9 +56,8 @@ The name of the enum.
 Array of arrays describing fields dependent on the enum. Each row is index
 is the possible value of enum minus 1 (e.g. row number 1 is for enum value 2).
 
-First item in the array is the state name. The rest of the items are field
-names. There is a possibility to mark optional fields by using trailing C<?>
-(e.g. C<b?> denotes an optional C<b> field.
+The items are field names. There is a possibility to mark optional fields by
+using trailing C<?> (e.g. C<b?> denotes an optional C<b> field.
 
 =back
 
@@ -76,33 +66,22 @@ sub new {
 	my ($class, $args) = @_;
 	my $self = $class->SUPER::new($args);
 	$self->optionals({});
+	my $i = 1;
 	for my $f (@{ $self->fields }) {
-		my $fn = $f->[0];
 		for my $in (@$f) {
-			$self->optionals->{$fn}->{$in} = 1 if ($in =~ s/\?$//);
+			$self->optionals->{$i}->{$in} = 1 if ($in =~ s/\?$//);
 		}
+		$i++;
 	}
 	return $self;
 }
 
 =head1 METHODS
 
-=head2 $self->enum_definition
-
-Returns the definition of enum column. See SYNOPSIS for example.
-
-=cut
-sub enum_definition {
-	my $self = shift;
-	my $n = $self->name;
-	return sprintf("$n smallint not null check ($n > 0 and $n < %d)"
-			, @{ $self->fields } + 1);
-}
-
 =head2 $self->for_each_kind($callback)
 
 Runs C<$callback> over registered enum states. For each state passes state
-name, fields which are in the state and fields which are out of the state.
+index, fields which are in the state and fields which are out of the state.
 
 The fields are passed as ARRAY references.
 
@@ -112,37 +91,65 @@ sub for_each_kind {
 	my $fs = $self->fields;
 	my %all;
 	for my $f (@$fs) {
-		my ($fn, @deps) = @$f;
-		$all{$_} = 1 for @deps;
+		$all{$_} = 1 for @$f;
 	}
+	my $i = 1;
 	for my $f (@$fs) {
-		my ($fn, @deps) = @$f;
 		my %not = %all;
-		delete $not{$_} for @deps;
-		$cb->($fn, \@deps, [ sort keys %not ]);
+		delete $not{$_} for @$f;
+		$cb->($i, $f, [ sort keys %not ]);
+		$i++;
 	}
 }
 
-=head2 $self->constraints
+=head2 $self->make_constraints
 
-Returns the list of generated constraints. See SYNOPSIS above for an example.
+Generates suitable PostgreSQL constraints using the fields.
+
+Also generates drop plpgsql function to automate dropping of the constraints.
 
 =cut
-sub constraints {
+sub make_constraints {
 	my $self = shift;
-	my $i = 1;
-	my $n = $self->name;
-	my @res;
+	my ($n, $t, $fc) = ($self->name, $self->table, @{ $self->fields } + 1);
+	my (%fins, %fouts);
 	$self->for_each_kind(sub {
-		my ($fn, $ins, $outs) = @_;
-		push @res, "constraint $fn\_has_$_ check "
-				. "($n <> $i or $_ is not null)"
-			for grep { !$self->optionals->{$fn}->{$_} } @$ins;
-		push @res, "constraint $fn\_has_no_$_ check "
-				. "($n <> $i or $_ is null)" for @$outs;
-		$i++;
+		my ($i, $ins, $outs) = @_;
+		push @{ $fins{$_} }, $i for @$ins;
+		push @{ $fouts{$_} }, $i for @$outs;
+		push @{ $fouts{$_} }, $i for grep {
+			$self->optionals->{$i}->{$_} } @$ins;
 	});
-	return @res;
+	my $inconstrs = join("\n", map { sprintf(<<ENDS
+alter table $t add constraint $t\_$n\_$_\_out_chk check (
+	$_ is null or $n in (%s));
+ENDS
+		, join(", ", @{ $fins{$_} })) } keys %fins);
+	my $outconstrs = join("\n", map { sprintf(<<ENDS
+alter table $t add constraint $t\_$n\_$_\_in_chk check (
+	$_ is not null or $n in (%s));
+ENDS
+		, join(", ", @{ $fouts{$_} })) } keys %fouts);
+	my $incodro = join("\n", map {
+		"alter table $t drop constraint $t\_$n\_$_\_out_chk;"
+	} keys %fins);
+	my $outcodro = join("\n", map {
+		"alter table $t drop constraint $t\_$n\_$_\_in_chk;"
+	} keys %fouts);
+
+	my $res = <<ENDS
+create function drop_$t\_$n\_constraints() returns void as \$\$
+begin
+alter table $t drop constraint $t\_$n\_size_chk;
+$incodro
+$outcodro
+drop function drop_$t\_$n\_constraints();
+end;
+\$\$ language plpgsql;
+alter table $t add constraint $t\_$n\_size_chk check ($n > 0 and $n < $fc);
+$inconstrs
+$outconstrs
+ENDS
 }
 
 1;
