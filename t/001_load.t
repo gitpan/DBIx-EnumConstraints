@@ -1,16 +1,15 @@
 use strict;
 use warnings FATAL => 'all';
 
-use Test::More tests => 14;
+use Test::More tests => 17;
 use Test::TempDatabase;
 use Carp;
 
 BEGIN { use_ok('DBIx::EnumConstraints'); }
 
-my $_not_finished = 1;
 my $test_db = Test::TempDatabase->create(dbname => 'ec_test_db'
 	, dbi_args => { AutoCommit => 1, PrintError => 0
-		, HandleError => sub { confess(shift) if $_not_finished; } });
+		, HandleError => sub { confess(shift); } });
 my $dbh = $test_db->handle;
 $dbh->do(<<ENDS);
 create language plpgsql;
@@ -81,4 +80,21 @@ $dbh->do($ec2->make_constraints);
 ok($dbh->do("insert into t1 (kind) values (2)"));
 ok($dbh->do("insert into t1 (kind, b) values (2, 'b')"));
 
-$_not_finished = undef;
+my $ec3 = DBIx::EnumConstraints->new({
+	table => t1 => name => 'kind', fields => [
+		[ qw(a) ]
+		, [ qw(b) ]
+	], column_groups => { a => [ 'c' ], b => [ 'd' ] } 
+});
+
+@vals = @in = @out = ();
+$ec3->for_each_kind(sub {
+	my ($idx, $ins, $outs) = @_;
+	push @vals, $idx;
+	push @in, $ins;
+	push @out, $outs;
+});
+is_deeply(\@vals, [ qw(1 2) ]);
+is_deeply(\@in, [ [ qw(a c) ], [ qw(b d) ] ]);
+is_deeply(\@out, [ [ qw(b d) ], [ qw(a c) ] ]);
+

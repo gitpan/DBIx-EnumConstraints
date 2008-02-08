@@ -33,7 +33,7 @@ package DBIx::EnumConstraints;
 use base 'Class::Accessor';
 __PACKAGE__->mk_accessors(qw(name fields optionals table));
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 =head1 CONSTRUCTORS
 
@@ -53,11 +53,18 @@ The name of the enum.
 
 =item fields
 
-Array of arrays describing fields dependent on the enum. Each row is index
+Array of arrays describing columns dependent on the enum. Each row is index
 is the possible value of enum minus 1 (e.g. row number 1 is for enum value 2).
 
-The items are field names. There is a possibility to mark optional fields by
+The items are column names. There is a possibility to mark optional columns by
 using trailing C<?> (e.g. C<b?> denotes an optional C<b> field.
+
+=item column_groups
+
+Hash of columns dependent on other columns. E.g. a => [ 'b', 'c' ] means that
+when C<a> is present C<b>, C<c> columns should be present as well.
+
+The key column should be given in C<fields> parameter above.
 
 =back
 
@@ -65,9 +72,12 @@ using trailing C<?> (e.g. C<b?> denotes an optional C<b> field.
 sub new {
 	my ($class, $args) = @_;
 	my $self = $class->SUPER::new($args);
+	my $cgs = $args->{column_groups} || {};
 	$self->optionals({});
 	my $i = 1;
 	for my $f (@{ $self->fields }) {
+		my @cfs = map { @{ $cgs->{$_ } || [] } } @$f;
+		push @$f, @cfs;
 		for my $in (@$f) {
 			$self->optionals->{$i}->{$in} = 1 if ($in =~ s/\?$//);
 		}

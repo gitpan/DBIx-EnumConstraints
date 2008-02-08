@@ -10,6 +10,6 @@ WriteMakefile(
     ABSTRACT     => 'Generates constraints for DB based enum',
     PREREQ_PM    => {
     			'Class::Accessor' => ''
-			, 'Test::TempDatabase' => '0.12'
+			, 'Test::TempDatabase' => '0.13'
                     },
 );
