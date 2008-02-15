@@ -1,7 +1,7 @@
 use strict;
 use warnings FATAL => 'all';
 
-use Test::More tests => 17;
+use Test::More tests => 21;
 use Test::TempDatabase;
 use Carp;
 
@@ -51,6 +51,10 @@ ok($dbh->do("insert into t1 (kind, c) values (3, 'c')"));
 eval { $dbh->do("insert into t1 (kind, a, c) values (3, 'a', 'c')"); };
 like($@, qr/t1_kind_a_out_chk/);
 
+my $ec20 = DBIx::EnumConstraints->new({ table => t1 => name => 'kind' });
+$ec20->load_fields_from_db($dbh);
+is_deeply($ec20->fields, $ec->fields);
+
 $dbh->do('select drop_t1_kind_constraints()');
 ok($dbh->do("insert into t1 (kind) values (20)"));
 ok($dbh->do("insert into t1 (kind, a) values (3, 'a')"));
@@ -98,3 +102,19 @@ is_deeply(\@vals, [ qw(1 2) ]);
 is_deeply(\@in, [ [ qw(a c) ], [ qw(b d) ] ]);
 is_deeply(\@out, [ [ qw(b d) ], [ qw(a c) ] ]);
 
+$dbh->do("delete from t1");
+$dbh->do('select drop_t1_kind_constraints()');
+$dbh->do($ec3->make_constraints);
+
+my $ec4 = DBIx::EnumConstraints->new({ table => t1 => name => 'kind' });
+$ec4->load_fields_from_db($dbh);
+my (@v4, @i4, @o4);
+$ec4->for_each_kind(sub {
+	my ($idx, $ins, $outs) = @_;
+	push @v4, $idx;
+	push @i4, $ins;
+	push @o4, $outs;
+});
+is_deeply(\@v4, \@vals);
+is_deeply(\@i4, \@in);
+is_deeply(\@o4, \@out);

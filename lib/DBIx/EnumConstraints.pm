@@ -33,7 +33,7 @@ package DBIx::EnumConstraints;
 use base 'Class::Accessor';
 __PACKAGE__->mk_accessors(qw(name fields optionals table));
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 =head1 CONSTRUCTORS
 
@@ -75,7 +75,7 @@ sub new {
 	my $cgs = $args->{column_groups} || {};
 	$self->optionals({});
 	my $i = 1;
-	for my $f (@{ $self->fields }) {
+	for my $f (@{ $self->fields || [] }) {
 		my @cfs = map { @{ $cgs->{$_ } || [] } } @$f;
 		push @$f, @cfs;
 		for my $in (@$f) {
@@ -160,6 +160,31 @@ alter table $t add constraint $t\_$n\_size_chk check ($n > 0 and $n < $fc);
 $inconstrs
 $outconstrs
 ENDS
+}
+
+=head2 $self->load_fields_from_db($dbh)
+
+Loads fields configuration from the database using current constraints.
+
+=cut
+sub load_fields_from_db {
+	my ($self, $dbh) = @_;
+	my ($t, $n) = ($self->table, $self->name);
+	my $arr = $dbh->selectall_arrayref(<<ENDS);
+select constraint_name, check_clause from information_schema.check_constraints
+	where constraint_name like '$t\_$n\_%_out_chk'
+ENDS
+	my @fields;
+	for my $a (@$arr) {
+		my ($c) = ($a->[0] =~ /$t\_$n\_(\w+)_out_chk$/);
+		my @no = ($a->[1] =~ /$n = (\d+)/);
+		if (!@no) {
+			$a->[1] =~ /$n = .*\[([\d, ]+)/;
+			@no = split(', ', $1);
+		}
+		push(@{ $fields[ $_ - 1 ] }, $c) for @no;
+	}
+	$self->fields(\@fields);
 }
 
 1;
