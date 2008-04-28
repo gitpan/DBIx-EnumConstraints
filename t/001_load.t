@@ -1,7 +1,7 @@
 use strict;
 use warnings FATAL => 'all';
 
-use Test::More tests => 21;
+use Test::More tests => 24;
 use Test::TempDatabase;
 use Carp;
 
@@ -118,3 +118,31 @@ $ec4->for_each_kind(sub {
 is_deeply(\@v4, \@vals);
 is_deeply(\@i4, \@in);
 is_deeply(\@o4, \@out);
+is(@{ $ec4->fields }, 2);
+
+$dbh->do("delete from t1");
+$dbh->do('select drop_t1_kind_constraints()');
+$ec3 = DBIx::EnumConstraints->new({
+	table => t1 => name => 'kind', fields => [
+		[ qw(a) ], []
+	], column_groups => { a => [ 'c' ], b => [ 'd' ] } 
+});
+$dbh->do($ec3->make_constraints);
+
+$ec4 = DBIx::EnumConstraints->new({ table => t1 => name => 'kind' });
+$ec4->load_fields_from_db($dbh);
+is(@{ $ec4->fields }, 2);
+
+$dbh->do("delete from t1");
+$dbh->do('select drop_t1_kind_constraints()');
+$ec3 = DBIx::EnumConstraints->new({
+	table => t1 => name => 'kind', fields => [
+		[ qw(a) ], map { [] } (1 .. 11)
+	], column_groups => { a => [ 'c' ], b => [ 'd' ] } 
+});
+$dbh->do($ec3->make_constraints);
+
+$ec4 = DBIx::EnumConstraints->new({ table => t1 => name => 'kind' });
+$ec4->load_fields_from_db($dbh);
+is(@{ $ec4->fields }, 12);
+

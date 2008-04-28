@@ -33,7 +33,7 @@ package DBIx::EnumConstraints;
 use base 'Class::Accessor';
 __PACKAGE__->mk_accessors(qw(name fields optionals table));
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 =head1 CONSTRUCTORS
 
@@ -170,11 +170,17 @@ Loads fields configuration from the database using current constraints.
 sub load_fields_from_db {
 	my ($self, $dbh) = @_;
 	my ($t, $n) = ($self->table, $self->name);
-	my $arr = $dbh->selectall_arrayref(<<ENDS);
+	my $arr = $dbh->selectcol_arrayref(<<ENDS);
+select check_clause from information_schema.check_constraints
+	where constraint_name = '$t\_$n\_size_chk'
+ENDS
+	my ($upto) = ($arr->[0] =~ /< (\d+)/);
+
+	$arr = $dbh->selectall_arrayref(<<ENDS);
 select constraint_name, check_clause from information_schema.check_constraints
 	where constraint_name like '$t\_$n\_%_out_chk'
 ENDS
-	my @fields;
+	my @fields = map { [] } (1 .. ($upto - 1));
 	for my $a (@$arr) {
 		my ($c) = ($a->[0] =~ /$t\_$n\_(\w+)_out_chk$/);
 		my @no = ($a->[1] =~ /$n = (\d+)/);
